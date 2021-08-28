@@ -1,0 +1,7 @@
+pandas_datareader
+statsmodels
+seaborn
+matplotlib
+numpy
+statsmodels
+pandas
