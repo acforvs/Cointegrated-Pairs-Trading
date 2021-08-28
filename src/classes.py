@@ -14,11 +14,8 @@ class TickersProcessor:
 
     Нужен для поиска коинтегрированных пар на указанном временном промежутке
     '''
+
     def __init__(self, tickers, startDate, endDate, initData=False):
-        '''
-        @param
-        tickers :
-        '''
         self._tickers = tickers
         self._startDate = startDate
         self._endDate = endDate
@@ -33,6 +30,7 @@ class TickersProcessor:
             'yahoo',
             start=self._startDate,
             end=self._endDate).Close
+
         return self._data
 
     @property
@@ -40,6 +38,14 @@ class TickersProcessor:
         return self._data
 
     def findCointegratedPairs(self):
+        '''
+        Выполняет тест на коинтеграцию по всем парам
+
+        Возвращает
+            keys : список всех тикеров
+            pvalue_matrix : матрица коинтегрированности
+            pairs : list of tuples выбранных пар активов
+        '''
         if self._data is None:
             self._data = data = self.getTickersData().dropna()
         else:
@@ -49,21 +55,24 @@ class TickersProcessor:
         pvalue_matrix = np.ones((n, n))
 
         pairs = []
-        for i in range(n):
-            for j in range(n):
+        for i, key_i in enumerate(data):
+            for j, key_j in enumerate(data):
                 if i == j:
                     continue
-                S1 = data[keys[i]]
-                S2 = data[keys[j]]
+                S1 = data[key_i]
+                S2 = data[key_j]
                 res = coint(S1, S2)
                 _, pvalue = res[0], res[1]
                 pvalue_matrix[i, j] = pvalue
                 if pvalue < 0.05:
-                    pairs.append((keys[i], keys[j]))
-        return keys, pvalue_matrix, pairs, keys
+                    pairs.append((key_i, key_j))
+        return keys, pvalue_matrix, pairs
 
     def visualizeCointegration(self):
-        _, pvalues, _, keys = self.findCointegratedPairs()
+        '''
+        Heatmap по матрице коинтеграции
+        '''
+        keys, pvalues, _ = self.findCointegratedPairs()
         fig, ax = plt.subplots(figsize=(12, 6))
         sns.heatmap(pvalues, xticklabels=keys, yticklabels=keys, cmap='coolwarm', annot=True, fmt=".2f",
                     mask=(pvalues >= 0.99))
@@ -74,6 +83,11 @@ class TickersProcessor:
 
 
 class PairsWorker:
+    '''
+    Принимает два тикера, а также информацию по их ценам
+    Умеет вычислять спред при помощи OLS и строить визуализацию
+    '''
+
     def __init__(self, tickerA, tickerB, tickerAData, tickerBData):
         self._tickerA = tickerA
         self._tickerB = tickerB
@@ -81,15 +95,25 @@ class PairsWorker:
         self._dataB = tickerBData
 
     def getSpread(self):
-        x_train = sm.add_constant(self._dataB)
-        model = sm.OLS(self._dataA, x_train)
-        result = model.fit()
-        hedge_ratio = result.params[1]
-        spread = self._dataA - self._dataB * hedge_ratio
+        '''
+        Получить стационарный спред двух активов
 
-        return spread, hedge_ratio
+        Возвращает
+            spread : сам спред
+            hedgeRatio : параметр регрессии
+        '''
+        xs = sm.add_constant(self._dataB)
+        model = sm.OLS(self._dataA, xs)
+        result = model.fit()
+        hedgeRatio = result.params[1]
+        spread = self._dataA - self._dataB * hedgeRatio
+
+        return spread, hedgeRatio
 
     def visualizeSpread(self):
+        '''
+        Визуализирует спред
+        '''
         spread, _ = self.getSpread()
         spreadPlt = plt.figure(figsize=(12, 6))
         plt.plot(spread, label='Спред')
@@ -101,6 +125,9 @@ class PairsWorker:
         plt.show()
 
     def visualizePriceMovement(self, finalPairTextNeeded=False):
+        '''
+        Выводит изменение цен обоих активов на одном графике
+        '''
         text = ' -- выбрали эту пару для торговли'
         pricesPlt = plt.figure(figsize=(12, 6))
 
@@ -117,10 +144,13 @@ class PairsWorker:
 
 
 class Trader:
+    '''
+    Принимает стартовый капитал, два тикера и информацию об их движении цен
+    Умеет генерировать сигналы и моделировать торговлю
+    '''
+
     def __init__(self, capital, tickerA, tickerB, tickerAData, tickerBData):
         self._capital = capital
-        self._cntA = 0
-        self._cntB = 0
         self._tickerA = tickerA
         self._tickerB = tickerB
         self._tickerAData = tickerAData
@@ -128,25 +158,30 @@ class Trader:
 
         self._signals1 = pd.DataFrame()
         self._signals2 = pd.DataFrame()
+        self._worker = PairsWorker(tickerA, tickerB, tickerAData, tickerBData)
 
     @property
     def capital(self):
         return self._capital
 
-    @property
-    def positions(self):
-        return self._cntA, self._cntA
-
     def getZScore(self, series):
+        '''
+        Изменяет DataFrame, чтобы сделать E = 0, D = 1
+        '''
         zScore = (series - series.mean()) / series.std()
         zLow = zScore.mean() - zScore.std()
         zUp = zScore.mean() + zScore.std()
+
         return zLow, zScore, zUp
 
     def visualizeZScore(self):
+        '''
+        Визуализирует z-score и threshold-ы, которые являются отсечками для начала торговли
+        '''
         signals = pd.DataFrame()
+        spread, _ = self._worker.getSpread()
         signals['z-low'], signals['z-score'], signals['z-up'] = self.getZScore(
-            self._tickerAData / self._tickerBData)
+            spread)
         signals['z-score'].plot(label="z value")
         plt.title('z-score')
         plt.axhline(signals['z-score'].dropna().mean(), color="black")
@@ -157,42 +192,53 @@ class Trader:
         plt.show()
 
     def createSignals(self):
+        '''
+        Генерирует сигналы для торговли
+
+        Возвращает DataFrame с ключами
+            signalsA & signalsB - сигналы по двум активам
+            positionsA & positionsB - количество активов в любой момент времени
+        '''
         signals = pd.DataFrame()
         signals[self._tickerA] = self._tickerAData
         signals[self._tickerB] = self._tickerBData
-        ratios = self._tickerAData / self._tickerBData
+        spread, hedge = self._worker.getSpread()
         signals['z-low'], signals['z-score'], signals['z-up'] = self.getZScore(
-            ratios)
+            spread)
 
         signals['signalsA'] = 0
         signals['signalsA'] = np.select(
-            [signals['z-score'] > signals['z-up'],
-             signals['z-score'] < signals['z-low']],
+            [signals['z-score'] > 1,
+             signals['z-score'] < -1],
             [-1, 1],
             default=0)
         signals['positionsA'] = signals['signalsA'].diff()
-        signals['signalsB'] = -signals['signalsA']
+        signals['signalsB'] = -hedge * signals['signalsA']
         signals['positionsB'] = signals['signalsB'].diff()
-        return signals
+
+        return signals, hedge
 
     def visualizeTrades(self):
-        signals = self.createSignals()
+        '''
+        Рисует график с отметками сделок
+        '''
+        signals, hedge = self.createSignals()
 
         fig = plt.figure(figsize=(12, 6))
         bx = fig.add_subplot(111)
         bx2 = bx.twinx()
 
-        l1, = bx.plot(signals[self._tickerA], color='blue')
-        l2, = bx2.plot(signals[self._tickerB], color='orange')
+        pricesA, = bx.plot(signals[self._tickerA], color='blue')
+        pricesB, = bx2.plot(signals[self._tickerB], color='orange')
 
-        u1, = bx.plot(signals[self._tickerA][signals['positionsA'] == 1],
-                      lw=0, marker='^', markersize=8, c='g', alpha=0.7)
-        d1, = bx.plot(signals[self._tickerA][signals['positionsA']
-                      == -1], lw=0, marker='v', markersize=8, c='r', alpha=0.7)
-        u2, = bx2.plot(signals[self._tickerB][signals['positionsB'] == 1],
-                       lw=0, marker=3, markersize=9, c='g', alpha=0.9, markeredgewidth=3)
-        d2, = bx2.plot(signals[self._tickerB][signals['positionsB'] == -1],
-                       lw=0, marker=3, markersize=9, c='r', alpha=0.9, markeredgewidth=3)
+        longA, = bx.plot(signals[self._tickerA][signals['positionsA'] == 1],
+                         lw=0, marker='^', markersize=9, c='g', alpha=0.7)
+        shortA, = bx.plot(signals[self._tickerA][signals['positionsA']
+                                                 == -1], lw=0, marker='v', markersize=9, c='r', alpha=0.7)
+        longB, = bx2.plot(signals[self._tickerB][signals['positionsB'] == hedge],
+                          lw=0, marker=3, markersize=9, c='g', alpha=0.9, markeredgewidth=3)
+        shortB, = bx2.plot(signals[self._tickerB][signals['positionsB'] == -hedge],
+                           lw=0, marker=3, markersize=9, c='r', alpha=0.9, markeredgewidth=3)
 
         bx.set_ylabel(self._tickerA,)
         bx2.set_ylabel(self._tickerB, rotation=270)
@@ -201,7 +247,7 @@ class Trader:
         bx.set_xlabel('Дата')
         bx.xaxis.labelpad = 15
 
-        plt.legend([l1, l2, u1, d1, u2, d2], [
+        plt.legend([pricesA, pricesB, longA, shortA, longB, shortB], [
             self._tickerA,
             self._tickerB,
             f'LONG {self._tickerA}',
@@ -217,14 +263,29 @@ class Trader:
         plt.show()
 
     def getSharpeRatio(self, returns, days, basePct=0.02):
+        '''
+        Выдает коэффициент Шарпа, получая на вход дневную доходность по отношению к прошлому дню и количество прошедших дней
+
+        Считает безрисковую процентную ставку по дефолту за 2% годовых
+        '''
         if basePct < 0 or basePct > 1:
             return None
         ret = (np.cumprod(1 + returns) - 1)[-1]
         return (ret - basePct) / (np.sqrt(days) * np.std(1 + returns))
 
     def getPortfolioStats(self):
+        '''
+        Получить статистику по стратегии
+
+        Возвращает
+            ожидаемый годовой возврат стратегии
+            коэффициент Шарпа первого актива
+            коэффициент Шарпа второго актива
+            отношение максимальной доходности к максимальной просадке
+            финальное количество денег в портфеле
+        '''
         DAYS_ONE_YEAR = 365
-        signals = self.createSignals()
+        signals, _ = self.createSignals()
 
         positionsA = self._capital // (2 * max(signals[self._tickerA]))
         positionsB = self._capital // (2 * max(signals[self._tickerB]))
@@ -261,4 +322,5 @@ class Trader:
                    self._capital) ** (DAYS_ONE_YEAR / delta) - 1
 
         return returns * 100, self.getSharpeRatio(portfolio['returnA'], delta), \
-            self.getSharpeRatio(portfolio['returnB'], delta), hDrawdown, finalPortfolio
+            self.getSharpeRatio(
+            portfolio['returnB'], delta), hDrawdown, finalPortfolio

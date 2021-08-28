@@ -3,9 +3,14 @@ from pairs_processor import getTickers
 
 
 def backtest(startDate, endDate):
+    '''
+    Бектест на тестовом временном интервале
+
+    Выдает пару, которая показала себя лучше всего
+    '''
     tickers = getTickers()
     p = TickersProcessor(tickers, startDate, endDate)
-    _, _, pairs, keys = p.findCointegratedPairs()
+    keys, _, pairs = p.findCointegratedPairs()
     p.visualizeCointegration()
     if not pairs:
         print('Не найдено подходящих для торговли пар, завершаем работу....')
@@ -35,6 +40,7 @@ def backtest(startDate, endDate):
 
 
 def main():
+    capital = 10000
     testStartDate = '2010-01-01'
     testEndDate = '2019-12-31'
     finalStartDate = '2021-01-01'
@@ -43,12 +49,13 @@ def main():
     tickerA, tickerB = backtest(testStartDate, testEndDate)
     print('После бектеста были выбраны пары: ', tickerA, tickerB)
 
-    p = TickersProcessor([tickerA, tickerB], finalStartDate, finalEndDate, True)
+    p = TickersProcessor([tickerA, tickerB],
+                         finalStartDate, finalEndDate, True)
     worker = PairsWorker(tickerA, tickerB, p.data[tickerA], p.data[tickerB])
     worker.visualizePriceMovement(True)
     worker.visualizeSpread()
 
-    t = Trader(10000, tickerA, tickerB, p.data[tickerA], p.data[tickerB])
+    t = Trader(capital, tickerA, tickerB, p.data[tickerA], p.data[tickerB])
     t.visualizeTrades()
     t.visualizeZScore()
     returns, sharpeA, sharpeB, hDrawdown, finalPortfolio = t.getPortfolioStats()
@@ -56,7 +63,8 @@ def main():
     print(
         f'Возврат на капитал: {returns}\nШарп первого актива: {sharpeA}\nШарп второго актива: {sharpeB}\nДоходность к просадке: {hDrawdown}')
 
-    print(f'Было денег: 1000, стало денег: {finalPortfolio}')
+    print(f'Было денег: {capital}, стало денег: {finalPortfolio}')
+
 
 if __name__ == '__main__':
     main()
