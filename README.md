@@ -1,4 +1,11 @@
-# algo-strategy-intro
+# Cointegrated Pairs Trading
+
+## This is the entrance task to Center of Mathematical Finance, Quantitative Analytics program, 2021
+
+This solution was graded 7.2 / 10, which helped me to score top-15% among both undergraduates and master students.
+
+You can find setup instructions in Russian below:
+
 
 Для установки зависимостей можно использовать
 ```
